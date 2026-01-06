@@ -2,10 +2,6 @@
 
 A high-performance, multimodal Retrieval-Augmented Generation (RAG) system designed to ingest complex PDFs and provide intelligent answers using text, tables, and images. Featuring a sleek, minimalist dark-themed Streamlit UI and a robust CLI pipeline.
 
-![Project Status](https://img.shields.io/badge/Status-Production--Ready-brightgreen)
-![Python](https://img.shields.io/badge/Python-3.11+-blue)
-![Framework](https://img.shields.io/badge/Framework-LangChain-orange)
-![Frontend](https://img.shields.io/badge/Frontend-Streamlit-red)
 
 ---
 
@@ -18,6 +14,12 @@ A high-performance, multimodal Retrieval-Augmented Generation (RAG) system desig
     - **CLI Pipeline**: A modular Python script for automated batch processing.
 - **Source Attribution**: Transparently shows the exact text segments, base64 images, and HTML tables used to generate every answer.
 - **Persistent Q&A Logging**: Automatically saves every interaction to `qna.json` for audit and history tracking.
+
+---
+
+## 🏗️ Architecture
+
+![Multi-modal RAG Ingestion Pipeline](assets/architecture.png)
 
 ---
 
@@ -78,6 +80,7 @@ uv run python main.py --pdf "./content/attention.pdf" --query "What is the trans
 ```text
 ├── app.py              # Streamlit Frontend
 ├── main.py             # Core RAG Pipeline & Logic
+├── assets/             # Architecture diagrams and images
 ├── content/            # Directory for uploaded PDFs
 ├── dbv2/               # Persistent ChromaDB storage
 ├── qna.json            # History of questions and multimodal answers
