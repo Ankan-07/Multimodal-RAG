@@ -167,6 +167,9 @@ class FusionTests(unittest.TestCase):
         self.assertEqual(
             merged[0]["retrieval_sources"], ["text_vector", "visual_vector"]
         )
+        # CHANGED: The chunk keeps the sum of both RRF scores, not only the
+        # highest one, so multi-source evidence is not lost.
+        self.assertAlmostEqual(merged[0]["rrf_score"], 0.07)
 
 
 class HybridStoreTests(unittest.TestCase):
@@ -226,6 +229,63 @@ class HybridStoreTests(unittest.TestCase):
             self.assertTrue(store.query_text("BLEU", 3))
             self.assertTrue(store.query_visual("BLEU", 3))
             self.assertTrue(store.query_bm25("28.4", 3))
+
+    def test_context_is_stored_once_and_resolved(self):
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as directory:
+            store = HybridVectorStore(
+                persist_directory=directory,
+                text_embedder=FakeTextEmbedder(),
+                visual_embedder=FakeVisualEmbedder(),
+            )
+            context = json.dumps(
+                {
+                    "raw_text": "Model BLEU score 28.4",
+                    "tables_html": [],
+                    "image_base64": [],
+                    "image_mime_types": [],
+                    "source": "paper.pdf",
+                    "page": 1,
+                }
+            )
+            # The text record owns the context. The image record has only the
+            # chunk_id and must resolve the context through the store.
+            batch = IngestionBatch(
+                text_records=[
+                    TextRecord(
+                        id="text:2",
+                        text="Model BLEU score 28.4",
+                        metadata={
+                            "source": "paper.pdf",
+                            "page": 1,
+                            "chunk_id": "chunk-2",
+                            "kind": "text",
+                            "original_content": context,
+                        },
+                    )
+                ],
+                visual_records=[
+                    VisualRecord(
+                        id="image:2",
+                        document="Image from paper.pdf",
+                        metadata={
+                            "source": "paper.pdf",
+                            "page": 1,
+                            "chunk_id": "chunk-2",
+                            "kind": "image",
+                        },
+                        kind="image",
+                        image_bytes=b"image-bytes",
+                        mime_type="image/png",
+                    )
+                ],
+            )
+
+            store.add_batch(batch)
+            self.assertEqual(store.get_chunk_context("chunk-2"), context)
+            store.delete_source("paper.pdf")
+            self.assertEqual(store.text_count, 0)
+            self.assertEqual(store.visual_count, 0)
+            self.assertIsNone(store.get_chunk_context("chunk-2"))
 
 
 if __name__ == "__main__":

@@ -1,5 +1,7 @@
 import base64
+import hashlib
 import os
+import re
 
 import streamlit as st
 
@@ -26,8 +28,25 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 
+# CHANGED: Remove active content and event handlers from table HTML before it
+# is rendered. Uploaded PDFs are untrusted input.
+_ACTIVE_TAG_RE = re.compile(
+    r"(?is)<(script|style|iframe|object|embed)[^>]*>.*?</\1>"
+)
+_EVENT_ATTR_RE = re.compile(r"(?i)\son\w+\s*=\s*(?:\"[^\"]*\"|'[^']*'|[^\s>]+)")
+
+
+def _safe_table_html(table_html: str) -> str:
+    cleaned = _ACTIVE_TAG_RE.sub("", str(table_html))
+    return _EVENT_ATTR_RE.sub("", cleaned)
+
+
 def display_base64_image(base64_str: str):
-    st.image(base64.b64decode(base64_str))
+    # CHANGED: A corrupt image must not stop the whole source panel.
+    try:
+        st.image(base64.b64decode(base64_str))
+    except Exception as exc:
+        st.warning(f"Could not display image: {exc}")
 
 
 def render_sources(sources: list):
@@ -40,19 +59,39 @@ def render_sources(sources: list):
         if source["tables"]:
             st.markdown("**Tables Found:**")
             for table in source["tables"]:
-                st.markdown(table, unsafe_allow_html=True)
+                st.markdown(_safe_table_html(table), unsafe_allow_html=True)
         if source["images"]:
             st.markdown("**Images Found:**")
             for img in source["images"]:
                 display_base64_image(img)
 
 
+@st.cache_resource(show_spinner=False)
+def _open_store():
+    """Open the persisted store once per server process.
+
+    The visual embedder is lazy, so this works without a Gemini key until an
+    image or table is actually queried.
+    """
+    return create_vector_store()
+
+
 if "messages" not in st.session_state:
     st.session_state.messages = []
 if "vector_db" not in st.session_state:
     st.session_state.vector_db = None
+if "store_error" not in st.session_state:
+    st.session_state.store_error = ""
 if "processed_files" not in st.session_state:
     st.session_state.processed_files = []
+
+# CHANGED: Reopen the persisted store on a fresh session. Without this, a
+# restart ignored dbv3/chroma_db and asked the user to upload the PDFs again.
+if st.session_state.vector_db is None and not st.session_state.store_error:
+    try:
+        st.session_state.vector_db = _open_store()
+    except Exception as exc:
+        st.session_state.store_error = str(exc)
 
 with st.sidebar:
     st.title(" Document Hub")
@@ -64,33 +103,61 @@ with st.sidebar:
             # MiniLM text records and Gemini image/table records.
             new_batches = []
             for uploaded_file in uploaded_files:
-                if uploaded_file.name not in st.session_state.processed_files:
-                    st.write(f"Processing {uploaded_file.name}...")
-                    os.makedirs(config.CONTENT_DIR, exist_ok=True)
-                    temp_path = os.path.join(config.CONTENT_DIR, uploaded_file.name)
-                    with open(temp_path, "wb") as f:
-                        f.write(uploaded_file.read())
+                if uploaded_file.name in st.session_state.processed_files:
+                    continue
 
-                    try:
-                        batch = build_ingestion_records(temp_path)
-                        new_batches.append((uploaded_file.name, batch))
-                        st.write(
-                            f"Built {len(batch.text_records)} text records and "
-                            f"{len(batch.visual_records)} visual records."
-                        )
-                    except Exception as exc:
-                        st.error(f"Could not process {uploaded_file.name}: {exc}")
+                st.write(f"Processing {uploaded_file.name}...")
+
+                # CHANGED: Use only the base name and add a content hash. A
+                # crafted name cannot escape content/, and two PDFs with the
+                # same name cannot overwrite each other.
+                safe_name = os.path.basename(uploaded_file.name)
+                if not safe_name.lower().endswith(".pdf"):
+                    st.error(f"Skipping {uploaded_file.name}: not a PDF")
+                    continue
+
+                try:
+                    file_bytes = uploaded_file.read()
+                    digest = hashlib.sha1(file_bytes).hexdigest()[:8]
+                    stem, _ = os.path.splitext(safe_name)
+                    stored_name = f"{stem}_{digest}.pdf"
+                    os.makedirs(config.CONTENT_DIR, exist_ok=True)
+                    temp_path = os.path.join(config.CONTENT_DIR, stored_name)
+                    with open(temp_path, "wb") as f:
+                        f.write(file_bytes)
+
+                    batch = build_ingestion_records(temp_path)
+                    new_batches.append((uploaded_file.name, stored_name, batch))
+                    st.write(
+                        f"Built {len(batch.text_records)} text records and "
+                        f"{len(batch.visual_records)} visual records."
+                    )
+                except Exception as exc:
+                    st.error(f"Could not process {uploaded_file.name}: {exc}")
 
             if new_batches:
                 # CHANGED: Open the existing hybrid store once, then add every
                 # new batch. The store embeds text with MiniLM and visuals with
                 # Gemini Embedding 2.
                 try:
-                    db = st.session_state.vector_db or create_vector_store()
-                    for filename, batch in new_batches:
-                        db.add_batch(batch)
-                        st.session_state.processed_files.append(filename)
+                    db = st.session_state.vector_db or _open_store()
+
+                    # CHANGED: Replace old records for the same source before
+                    # adding the new ones. Then rebuild BM25 once for the whole
+                    # upload instead of once per file.
+                    for _, stored_name, _ in new_batches:
+                        db.delete_source(stored_name)
+                    failures = db.add_batches([batch for _, _, batch in new_batches])
+
+                    for display_name, _, _ in new_batches:
+                        st.session_state.processed_files.append(display_name)
                     st.session_state.vector_db = db
+                    st.session_state.store_error = ""
+                    if failures:
+                        st.warning(
+                            f"{failures} visual records could not be embedded. "
+                            "Check GEMINI_API_KEY and the logs."
+                        )
                     status.update(
                         label="✅ All documents processed!",
                         state="complete",
@@ -115,9 +182,17 @@ with st.sidebar:
     if st.session_state.vector_db:
         # CHANGED: Show both collections so text and visual ingestion are visible.
         db = st.session_state.vector_db
-        st.success(
-            f"Database active with {len(st.session_state.processed_files)} files "
-            f"({db.text_count} text, {db.visual_count} visual records)"
+        if db.text_count or db.visual_count:
+            st.success(
+                f"Database active with {db.text_count} text and "
+                f"{db.visual_count} visual records"
+            )
+        else:
+            st.info("Upload and process files to begin")
+    elif st.session_state.store_error:
+        st.error(
+            "Could not open the vector store: "
+            f"{st.session_state.store_error}"
         )
     else:
         st.info("Upload and process files to begin")

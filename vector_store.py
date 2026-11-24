@@ -43,16 +43,24 @@ class HybridVectorStore:
         )
 
         # NEW: The text model stays local. The visual model is lazy; it does not
-        # call Google until the first image or visual query arrives.
+        # call Google until the first image or visual query arrives. This lets a
+        # text-only store open without a Gemini key.
         self.text_embedder = text_embedder or SentenceTransformerEmbeddings(
             model_name=config.EMBEDDING_MODEL
         )
-        self.visual_embedder = visual_embedder or GeminiEmbedder()
+        self._visual_embedder = visual_embedder
 
         # NEW: BM25 is rebuilt from persisted Chroma records. This keeps the
         # keyword index in sync after an application restart.
         self.bm25 = BM25Index([])
         self.rebuild_bm25()
+
+    @property
+    def visual_embedder(self) -> Any:
+        """Create the Gemini client on first use, not when the store opens."""
+        if self._visual_embedder is None:
+            self._visual_embedder = GeminiEmbedder()
+        return self._visual_embedder
 
     @property
     def text_count(self) -> int:
@@ -77,10 +85,14 @@ class HybridVectorStore:
         )
         logger.info("Upserted %s text records", len(records))
 
-    def add_visual_records(self, records: List[VisualRecord]) -> None:
-        """Embed and upsert images and tables with Gemini Embedding 2."""
+    def add_visual_records(self, records: List[VisualRecord]) -> int:
+        """Embed and upsert images and tables with Gemini Embedding 2.
+
+        Returns the number of records that could not be embedded, so the caller
+        can report a partial failure instead of a silent one.
+        """
         if not records:
-            return
+            return 0
 
         ids: List[str] = []
         embeddings: List[List[float]] = []
@@ -127,12 +139,26 @@ class HybridVectorStore:
                 "Gemini visual embedding failed for every record. "
                 "Check GEMINI_API_KEY and the API error logs."
             )
+        return failures
 
-    def add_batch(self, batch: IngestionBatch) -> None:
+    def add_batch(self, batch: IngestionBatch) -> int:
         """Add one document batch and refresh the BM25 index."""
-        self.add_text_records(batch.text_records)
-        self.add_visual_records(batch.visual_records)
-        self.rebuild_bm25()
+        return self.add_batches([batch])
+
+    def add_batches(self, batches: List[IngestionBatch]) -> int:
+        """Add several batches, then rebuild BM25 once.
+
+        The rebuild runs in ``finally`` so a visual failure cannot leave the
+        BM25 index stale for the text records that were already written.
+        """
+        failures = 0
+        try:
+            for batch in batches:
+                self.add_text_records(batch.text_records)
+                failures += self.add_visual_records(batch.visual_records)
+        finally:
+            self.rebuild_bm25()
+        return failures
 
     def _query_collection(
         self,
@@ -180,6 +206,10 @@ class HybridVectorStore:
 
     def query_visual(self, query: str, top_k: int) -> List[Dict[str, Any]]:
         """Query the Gemini image and table collection with a text query."""
+        # CHANGED: Check the collection before the query embedding. A text-only
+        # store must not make a paid Gemini call on every query.
+        if top_k <= 0 or self.visual_collection.count() == 0:
+            return []
         vector = self.visual_embedder.embed_text(query)
         return self._query_collection(
             self.visual_collection, vector, top_k, "visual_vector"
@@ -223,6 +253,28 @@ class HybridVectorStore:
 
         self.bm25 = BM25Index(documents)
         logger.info("BM25 index rebuilt with %s documents", self.bm25.size)
+
+    def get_chunk_context(self, chunk_id: str) -> Optional[str]:
+        """Return the answer-time context for one chunk, if it is stored.
+
+        The context is written once per chunk, on the first record. A later
+        record for the same chunk has only ``chunk_id``, so the retriever asks
+        the store for the owner record.
+        """
+        if not chunk_id:
+            return None
+
+        for collection in (self.text_collection, self.visual_collection):
+            data = collection.get(
+                where={"chunk_id": chunk_id},
+                include=["metadatas"],
+                limit=20,
+            )
+            for metadata in data.get("metadatas", []) or []:
+                context = (metadata or {}).get("original_content")
+                if context:
+                    return context
+        return None
 
     def delete_source(self, source: str) -> None:
         """Delete all records for one source before re-ingestion."""

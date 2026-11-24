@@ -85,20 +85,20 @@ def _prepare_image(
                 logger.info("Skipping small image: %sx%s", width, height)
                 return None
 
+            # CHANGED: Trust the format that Pillow detects, not the metadata
+            # MIME type. A mislabeled BMP must not be sent to Gemini as PNG.
             detected_format = (image.format or "").upper()
             detected_mime = {
                 "PNG": "image/png",
                 "JPEG": "image/jpeg",
                 "JPG": "image/jpeg",
             }.get(detected_format)
-            normalized_mime = detected_mime or (mime_type or "").lower()
-            if normalized_mime == "image/jpg":
-                normalized_mime = "image/jpeg"
 
-            if normalized_mime in SUPPORTED_IMAGE_MIME_TYPES:
-                return image_base64, normalized_mime, image_bytes
+            if detected_mime in SUPPORTED_IMAGE_MIME_TYPES:
+                return image_base64, detected_mime, image_bytes
 
-            # Convert unsupported formats to PNG for Gemini and the answer model.
+            # Convert unsupported or unknown formats to PNG for Gemini and the
+            # answer model.
             output = io.BytesIO()
             image.convert("RGB").save(output, format="PNG")
             converted = output.getvalue()
@@ -140,15 +140,17 @@ def build_ingestion_records(pdf_path: str) -> IngestionBatch:
     chunks = create_chunks_by_title(elements)
 
     batch = IngestionBatch()
-    seen_images: set[str] = set()
 
     for index, chunk in enumerate(chunks):
         content = separate_content_types(chunk)
         page = int(content.get("page_number") or 0)
         chunk_id = _chunk_id(source, page, content["text"], index)
 
-        # Normalize and filter images before they enter either collection.
+        # CHANGED: Deduplicate images inside one chunk, not across the whole
+        # document. A duplicate image must stay with every chunk that contains
+        # it, otherwise it is lost when the first chunk is not retrieved.
         valid_images: List[Tuple[str, str, bytes]] = []
+        seen_images: set[str] = set()
         for image_base64, mime_type in zip(
             content["images"], content["image_mime_types"]
         ):
@@ -174,20 +176,29 @@ def build_ingestion_records(pdf_path: str) -> IngestionBatch:
             page=page,
         )
 
-        # Text stays on MiniLM and keeps the full answer-time context. Skip an
-        # empty text record when the chunk contains only a table or image.
+        # CHANGED: Store the answer-time context once per chunk. The first
+        # record for the chunk owns it; later records store only chunk_id. This
+        # stops every image and table record from duplicating all Base64 image
+        # data in its metadata.
+        context_written = False
+
+        # Text stays on MiniLM. Skip an empty text record when the chunk
+        # contains only a table or image.
         if content["text"].strip():
+            metadata = {
+                "source": source,
+                "page": page,
+                "chunk_id": chunk_id,
+                "kind": "text",
+            }
+            if not context_written:
+                metadata["original_content"] = original_content
+                context_written = True
             batch.text_records.append(
                 TextRecord(
                     id=f"text:{chunk_id}",
                     text=content["text"],
-                    metadata={
-                        "source": source,
-                        "page": page,
-                        "chunk_id": chunk_id,
-                        "kind": "text",
-                        "original_content": original_content,
-                    },
+                    metadata=metadata,
                 )
             )
 
@@ -197,6 +208,17 @@ def build_ingestion_records(pdf_path: str) -> IngestionBatch:
             valid_images
         ):
             image_hash = _sha1(image_bytes)
+            metadata = {
+                "source": source,
+                "page": page,
+                "chunk_id": chunk_id,
+                "kind": "image",
+                "image_index": image_index,
+                "image_hash": image_hash,
+            }
+            if not context_written:
+                metadata["original_content"] = original_content
+                context_written = True
             batch.visual_records.append(
                 VisualRecord(
                     id=f"image:{chunk_id}:{image_hash}",
@@ -204,15 +226,7 @@ def build_ingestion_records(pdf_path: str) -> IngestionBatch:
                     kind="image",
                     image_bytes=image_bytes,
                     mime_type=mime_type,
-                    metadata={
-                        "source": source,
-                        "page": page,
-                        "chunk_id": chunk_id,
-                        "kind": "image",
-                        "image_index": image_index,
-                        "image_hash": image_hash,
-                        "original_content": original_content,
-                    },
+                    metadata=metadata,
                 )
             )
 
@@ -222,20 +236,23 @@ def build_ingestion_records(pdf_path: str) -> IngestionBatch:
             table_text = _table_html_to_text(table_html)
             if not table_text:
                 continue
+            metadata = {
+                "source": source,
+                "page": page,
+                "chunk_id": chunk_id,
+                "kind": "table",
+                "table_index": table_index,
+            }
+            if not context_written:
+                metadata["original_content"] = original_content
+                context_written = True
             batch.visual_records.append(
                 VisualRecord(
                     id=f"table:{chunk_id}:{table_index}",
                     document=table_text,
                     kind="table",
                     embedding_text=table_text[: config.TABLE_EMBED_MAX_CHARS],
-                    metadata={
-                        "source": source,
-                        "page": page,
-                        "chunk_id": chunk_id,
-                        "kind": "table",
-                        "table_index": table_index,
-                        "original_content": original_content,
-                    },
+                    metadata=metadata,
                 )
             )
 

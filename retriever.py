@@ -76,28 +76,42 @@ def _merge_by_chunk(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Keep one representative record per parent chunk.
 
     A text hit and an image hit can point to the same chunk. They share the
-    same original_content metadata, so one representative is enough for the
-    answer model. The highest RRF score wins.
+    same parent chunk, so one representative is enough for the answer model.
+
+    CHANGED: Add the RRF scores of every record in the chunk. A chunk found by
+    all three sources must rank above a chunk found once, which is the point of
+    RRF. The representative is still the record with the highest single score.
     """
     groups: Dict[str, Dict[str, Any]] = {}
 
     for candidate in candidates:
         metadata = candidate.get("metadata") or {}
         group_id = metadata.get("chunk_id") or candidate.get("id")
+        candidate_score = float(candidate.get("rrf_score", 0.0))
+
         if group_id not in groups:
-            groups[group_id] = dict(candidate)
+            groups[group_id] = {
+                "representative": dict(candidate),
+                "rrf_score": candidate_score,
+                "retrieval_sources": set(candidate.get("retrieval_sources", [])),
+            }
             continue
 
-        current = groups[group_id]
-        merged_sources = sorted(
-            set(current.get("retrieval_sources", []))
-            | set(candidate.get("retrieval_sources", []))
-        )
-        if candidate.get("rrf_score", 0.0) > current.get("rrf_score", 0.0):
-            groups[group_id] = dict(candidate)
-        groups[group_id]["retrieval_sources"] = merged_sources
+        group = groups[group_id]
+        group["rrf_score"] += candidate_score
+        group["retrieval_sources"].update(candidate.get("retrieval_sources", []))
+        if candidate_score > float(
+            group["representative"].get("rrf_score", 0.0)
+        ):
+            group["representative"] = dict(candidate)
 
-    merged = list(groups.values())
+    merged: List[Dict[str, Any]] = []
+    for group in groups.values():
+        item = dict(group["representative"])
+        item["rrf_score"] = group["rrf_score"]
+        item["retrieval_sources"] = sorted(group["retrieval_sources"])
+        merged.append(item)
+
     merged.sort(key=lambda item: item.get("rrf_score", 0.0), reverse=True)
     return merged
 
@@ -127,6 +141,16 @@ def retrieve_documents(vector_store: Any, query: str) -> List[Document]:
     documents: List[Document] = []
     for item in merged:
         metadata = dict(item.get("metadata") or {})
+
+        # CHANGED: The context is stored once per chunk. If this record is not
+        # the owner, fetch the context from the store by chunk_id.
+        if not metadata.get("original_content"):
+            context = vector_store.get_chunk_context(
+                str(metadata.get("chunk_id", ""))
+            )
+            if context:
+                metadata["original_content"] = context
+
         # Keep retrieval diagnostics in metadata. This helps tune RRF weights
         # and inspect why a chunk was selected.
         metadata["rrf_score"] = float(item.get("rrf_score", 0.0))
@@ -188,13 +212,22 @@ def generate_final_answer(chunks: List[Document], query: str) -> str:
             prompt_text += f"-----Document {i + 1}-----\n"
             raw_text = original_data.get("raw_text", "")
             if raw_text:
-                prompt_text += f"TEXT:\n{raw_text}\n\n"
+                # CHANGED: Keep the prompt inside a fixed character budget.
+                remaining = config.MAX_PROMPT_CHARS - len(prompt_text)
+                if remaining > 0:
+                    prompt_text += f"TEXT:\n{raw_text[:remaining]}\n\n"
 
             tables_html = original_data.get("tables_html", [])
             if tables_html:
                 prompt_text += "TABLES:\n"
                 for j, table in enumerate(tables_html):
-                    prompt_text += f"table {j + 1}: {table}\n"
+                    remaining = config.MAX_PROMPT_CHARS - len(prompt_text)
+                    if remaining <= 0:
+                        break
+                    # CHANGED: Cap each table and the total prompt so a large
+                    # table cannot truncate the question or the instructions.
+                    table_text = str(table)[: config.TABLE_CONTEXT_MAX_CHARS]
+                    prompt_text += f"table {j + 1}: {table_text[:remaining]}\n"
             prompt_text += "\n"
 
             mime_types = original_data.get("image_mime_types", [])

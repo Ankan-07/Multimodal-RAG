@@ -6,6 +6,10 @@ load_dotenv()
 # Existing OpenRouter configuration. The answer model and the optional
 # summarizer still use this key.
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+# Treat the template value as missing so the app does not send a fake key to
+# OpenRouter.
+if OPENAI_API_KEY and OPENAI_API_KEY.strip().lower().startswith("your_"):
+    OPENAI_API_KEY = None
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Legacy summarizer setting. The new ingestion path does not call it.
@@ -56,6 +60,11 @@ MIN_IMAGE_HEIGHT = 100
 # NEW: Table text can be longer than the embedding limit. Store the full text
 # for BM25 and answer generation, but embed only this prefix.
 TABLE_EMBED_MAX_CHARS = 7000
+
+# NEW: The answer model has a context budget. Cap each table and the total
+# prompt so a large table cannot push the question or the answer out of range.
+TABLE_CONTEXT_MAX_CHARS = 4000
+MAX_PROMPT_CHARS = 24000
 
 # NEW: Gemini request retry count for temporary API or network failures.
 GEMINI_REQUEST_RETRIES = 3

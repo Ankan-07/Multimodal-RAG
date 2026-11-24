@@ -36,6 +36,9 @@ Fusion (RRF) and sent to a vision-capable answer model.
 
 1. Clone the repository and enter the project directory.
 
+   Unstructured `hi_res` PDF parsing needs **Poppler** and **Tesseract** on
+   your `PATH`. Install them before the first ingestion.
+
 2. Create `.env` from the template:
 
    ```env
@@ -44,7 +47,12 @@ Fusion (RRF) and sent to a vision-capable answer model.
    ```
 
    `OPENAI_API_KEY` is used for the OpenRouter answer model.
-   `GEMINI_API_KEY` is used for image and table embeddings.
+   `GEMINI_API_KEY` is used for image and table embeddings. `GOOGLE_API_KEY`
+   is accepted as a fallback. A placeholder value that starts with `your_` is
+   treated as missing.
+
+   A text-only store can open without a Gemini key. Image and table ingestion
+   and visual queries need the key.
 
 3. Install dependencies:
 
@@ -112,6 +120,13 @@ uv run python pipeline.py --pdf "./content/attention.pdf" --query "What is the t
   `dbv3/chroma_db`.
 - Re-ingest documents because the collection layout and embedding models
   changed.
+- Re-uploading a PDF replaces the old records for the same stored source
+  before it adds the new ones. The app adds a short content hash to the stored
+  file name, so two PDFs with the same name do not collide.
+- Very small images (under 100×100) and duplicate images inside one chunk are
+  skipped. A duplicate image in a different chunk is kept.
+- The answer prompt caps each table at 4000 characters and the whole prompt at
+  24000 characters. Full table text stays in the store for retrieval.
 - A reranker is not part of the default pipeline. Add one only if retrieval
   evaluation shows good Recall@10 but poor Precision@3.
 - The notebook `pipeline.ipynb` contains the old summary-based flow. Use

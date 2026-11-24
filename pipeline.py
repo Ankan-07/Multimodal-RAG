@@ -2,6 +2,7 @@
 
 import argparse
 import logging
+import os
 from typing import List, Optional, Tuple
 
 from langchain_core.documents import Document
@@ -27,6 +28,9 @@ def run_ingestion(
     """Create the hybrid store and add one document batch."""
     batch = ingest_pdf(pdf_path)
     db = create_vector_store(persist_directory)
+    # CHANGED: Replace old records for the same source before adding. A changed
+    # PDF must not leave stale text, image, or table records behind.
+    db.delete_source(os.path.basename(pdf_path))
     db.add_batch(batch)
     logger.info("Ingestion complete")
     return db

@@ -97,8 +97,11 @@ class GeminiEmbedder:
     def _embed_contents(self, contents: Any, description: str) -> List[float]:
         """Send one embedding request, retrying only transient failures."""
         client = self._get_client()
+        # CHANGED: Let the API truncate oversized table text. Without this, one
+        # large table fails the request and then also disappears from BM25.
         request_config = types.EmbedContentConfig(
-            output_dimensionality=self._output_dim
+            output_dimensionality=self._output_dim,
+            auto_truncate=True,
         )
 
         # One initial attempt plus GEMINI_REQUEST_RETRIES retries.

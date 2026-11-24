@@ -44,8 +44,15 @@ def separate_content_types(chunk: Any) -> Dict[str, Any]:
 
             if element_type == "Table":
                 content_data["types"].append("table")
-                table_html = getattr(element.metadata, "text_as_html", element.text)
-                content_data["tables"].append(table_html)
+                # CHANGED: text_as_html can exist but be None. Fall back to the
+                # element text so the table is not silently dropped.
+                table_html = (
+                    getattr(element.metadata, "text_as_html", None)
+                    or element.text
+                    or ""
+                )
+                if table_html:
+                    content_data["tables"].append(table_html)
 
             elif element_type == "Image":
                 if hasattr(element, "metadata") and hasattr(element.metadata, "image_base64"):
