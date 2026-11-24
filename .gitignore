@@ -39,6 +39,8 @@ venv.bak/
 content/
 db/
 dbv2/
+dbv3/
+.firecrawl/
 chunks_export.json
 qna.json
 rag_result.json
