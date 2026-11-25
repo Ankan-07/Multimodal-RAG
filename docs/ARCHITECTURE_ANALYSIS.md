@@ -37,7 +37,7 @@
 │     └── metadata["original_content"]  =  JSON blob with            │
 │              raw_text | tables_html | image_base64                  │
 │     ▼                                                                │
-│  SentenceTransformerEmbeddings("all-MiniLM-L6-v2")                 │
+│  HuggingFaceEmbeddings("all-MiniLM-L6-v2")                       │
 │     ▼                                                                │
 │  ChromaDB  (HNSW, cosine, persisted to dbv2/chroma_db)             │
 └──────────────────────────────────────────────────────────────────────┘
@@ -47,7 +47,7 @@
 │                                                                      │
 │  User Query                                                          │
 │     ▼                                                                │
-│  SentenceTransformerEmbeddings (same model, re-instantiated)        │
+│  HuggingFaceEmbeddings (same model, re-instantiated)              │
 │     ▼                                                                │
 │  ChromaDB.as_retriever(k=3)  ── top-3 cosine-nearest chunks        │
 │     ▼                                                                │
@@ -169,7 +169,7 @@ Uploading 5 documents means 5 fully sequential `partition_pdf` calls.
 
 **Where**: `vector_store.py → _embedding_model()`.
 
-**Problem**: `SentenceTransformerEmbeddings(model_name="all-MiniLM-L6-v2")` downloads weights from HuggingFace Hub and loads them into RAM every time `create_vector_store()` or `load_vector_store()` is called. In the Streamlit app this happens every time the user processes a new batch (even on the same session). Loading a SentenceTransformer model takes 2–5 seconds and ~90 MB of RAM.
+**Problem**: `HuggingFaceEmbeddings(model_name="all-MiniLM-L6-v2")` downloads weights from HuggingFace Hub and loads them into RAM every time `create_vector_store()` or `load_vector_store()` is called. In the Streamlit app this happens every time the user processes a new batch (even on the same session). Loading a SentenceTransformer model takes 2–5 seconds and ~90 MB of RAM.
 
 ---
 

@@ -9,7 +9,7 @@ import logging
 from typing import Any, Dict, List, Optional
 
 import chromadb
-from langchain_community.embeddings import SentenceTransformerEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 
 import config
 from bm25_store import BM25Index
@@ -45,7 +45,7 @@ class HybridVectorStore:
         # NEW: The text model stays local. The visual model is lazy; it does not
         # call Google until the first image or visual query arrives. This lets a
         # text-only store open without a Gemini key.
-        self.text_embedder = text_embedder or SentenceTransformerEmbeddings(
+        self.text_embedder = text_embedder or HuggingFaceEmbeddings(
             model_name=config.EMBEDDING_MODEL
         )
         self._visual_embedder = visual_embedder

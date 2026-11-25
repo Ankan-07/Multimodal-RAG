@@ -28,6 +28,11 @@ SUPPORTED_IMAGE_MIME_TYPES = {"image/png", "image/jpeg"}
 # HTTP status codes that can succeed when the request is sent again.
 RETRYABLE_STATUS_CODES = {408, 429, 500, 502, 503, 504}
 
+# Safety cap for text sent to the embedding API. The Gemini Developer API no
+# longer accepts the auto_truncate flag (Enterprise-only), so oversized input
+# is truncated locally to stay under the model context limit.
+MAX_TEXT_CHARS_FOR_EMBEDDING = 10000
+
 # Base delay for exponential backoff, and a cap so a high retry count does not
 # stall a long ingestion run.
 RETRY_BASE_DELAY_SECONDS = 1.0
@@ -67,6 +72,16 @@ class GeminiEmbedder:
         if not text or not text.strip():
             raise ValueError("Cannot embed empty text.")
 
+        # Truncate locally instead of relying on the API auto_truncate flag
+        # (which is unsupported in Gemini Developer API mode).
+        if len(text) > MAX_TEXT_CHARS_FOR_EMBEDDING:
+            logger.warning(
+                "Truncating text from %d to %d characters for embedding.",
+                len(text),
+                MAX_TEXT_CHARS_FOR_EMBEDDING,
+            )
+            text = text[:MAX_TEXT_CHARS_FOR_EMBEDDING]
+
         # A plain string is a valid content value for the Gemini API.
         return self._embed_contents(text, "text")
 
@@ -97,11 +112,11 @@ class GeminiEmbedder:
     def _embed_contents(self, contents: Any, description: str) -> List[float]:
         """Send one embedding request, retrying only transient failures."""
         client = self._get_client()
-        # CHANGED: Let the API truncate oversized table text. Without this, one
-        # large table fails the request and then also disappears from BM25.
+        # The Gemini Developer API rejects auto_truncate (Enterprise-only), so
+        # oversized input is truncated in embed_text. Images are resized by the
+        # API or converted to PNG, and stay within the API limits.
         request_config = types.EmbedContentConfig(
             output_dimensionality=self._output_dim,
-            auto_truncate=True,
         )
 
         # One initial attempt plus GEMINI_REQUEST_RETRIES retries.
