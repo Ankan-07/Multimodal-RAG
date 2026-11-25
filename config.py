@@ -12,9 +12,11 @@ if OPENAI_API_KEY and OPENAI_API_KEY.strip().lower().startswith("your_"):
     OPENAI_API_KEY = None
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
-# Legacy summarizer setting. The new ingestion path does not call it.
-SUMMARIZER_MODEL = "nvidia/nemotron-nano-12b-v2-vl:free"
-ANSWER_MODEL = "meta-llama/llama-3.2-11b-vision-instruct:free"
+# Generic OpenRouter Free Models Router. It picks a free model automatically
+# and filters for request capabilities such as image understanding, so both
+# tasks (summarizer and answer) keep working without pinning specific models.
+SUMMARIZER_MODEL = "openrouter/free"
+ANSWER_MODEL = "openrouter/free"
 
 # NEW: Text embeddings stay on the local Sentence Transformer model.
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
