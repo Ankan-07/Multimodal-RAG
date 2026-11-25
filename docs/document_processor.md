@@ -1,9 +1,20 @@
 # document_processor.py
 
-This module is responsible for turning a raw PDF file into structured, chunked content that can be processed downstream. There are three functions here, each handling one stage of that transformation.
+This module turns a raw PDF into structured, chunked content for downstream
+processing.
 
-`partition_document` uses the `unstructured` library to parse the PDF. The key decision here is using `strategy="hi_res"` — this runs a layout detection model over each page rather than just extracting raw text, which means it correctly identifies tables as tables and images as images instead of treating everything as a flat text stream. We set `infer_table_structure=True` so tables get extracted as HTML rather than collapsed into jumbled text, and `extract_image_block_to_payload=True` so images are stored as base64 strings directly in the element metadata rather than written to disk. That makes the whole pipeline stateless with respect to image storage.
+`partition_document` uses `unstructured` with `strategy="hi_res"` (layout
+detection over each page), `infer_table_structure=True` (tables extracted as
+HTML), and `extract_image_block_types=["Image"]` with
+`extract_image_block_to_payload=True` (images kept as base64 in element
+metadata, not written to disk).
 
-`create_chunks_by_title` uses unstructured's title-aware chunker. Rather than naively splitting by character count, this respects document structure — it tries to keep sections under the same heading together. The three size parameters work together: `new_after_n_chars` is the soft target where we'd prefer to start a new chunk, `max_characters` is the hard ceiling, and `combine_text_under_n_chars` prevents tiny orphan chunks by merging short sections with their neighbors.
+`create_chunks_by_title` uses unstructured's title-aware chunker with the
+config sizes: `max_characters=3000`, `new_after_n_chars=2500`,
+`combine_text_under_n_chars=500`.
 
-`separate_content_types` walks the `orig_elements` in each chunk's metadata to pull out tables and images separately from the text. Unstructured stores the original elements on each chunk so you can always go back to the source material. We need this separation because downstream, text can go straight into the vector store, but tables and images need to be passed to a vision-language model for summarization. Keeping them in separate lists makes that branching logic clean.
+`separate_content_types` inspects each chunk's `orig_elements` and returns a
+dict with `text`, `tables` (HTML strings), `images` (base64), `image_mime_types`, `types`, and `page_number`. Tables fall back to element
+text when `text_as_html` is missing. Images keep their MIME type but fall
+back to `image/jpeg`. Downstream, text becomes a `TextRecord`; tables and
+images become `VisualRecord`s — no vision-LLM summarization is applied here.

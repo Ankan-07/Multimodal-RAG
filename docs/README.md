@@ -7,15 +7,14 @@ The current architecture is a hybrid retrieval design:
 - BM25L keyword index over text chunks and table text
 - RRF fusion across text, visual, and BM25 candidates
 - No reranker by default
+- Answer model: `openrouter/free` via OpenRouter
 
-See the root `README.md` and these modules for the current implementation:
+See the root `README.md` and these docs for the current implementation:
 
-- `ingestion.py`
-- `vector_store.py`
-- `retriever.py`
-- `gemini_embeddings.py`
-- `bm25_store.py`
-
-The other files in this `docs/` folder describe the older summary-based
-pipeline. They are kept as historical notes and are not a description of the
-current runtime path.
+- `app.md` — Streamlit UI
+- `config.md` — configuration and model names
+- `document_processor.md` — PDF partition and content separation
+- `pipeline.md` — CLI pipeline
+- `retriever.md` — hybrid retrieval, RRF, and answer generation
+- `vector_store.md` — two Chroma collections + BM25
+- `ARCHITECTURE_ANALYSIS.md` — architecture analysis, bottlenecks, roadmap

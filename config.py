@@ -3,8 +3,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Existing OpenRouter configuration. The answer model and the optional
-# summarizer still use this key.
+# Existing OpenRouter configuration. The answer model uses this key.
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 # Treat the template value as missing so the app does not send a fake key to
 # OpenRouter.
@@ -13,9 +12,8 @@ if OPENAI_API_KEY and OPENAI_API_KEY.strip().lower().startswith("your_"):
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 # Generic OpenRouter Free Models Router. It picks a free model automatically
-# and filters for request capabilities such as image understanding, so both
-# tasks (summarizer and answer) keep working without pinning specific models.
-SUMMARIZER_MODEL = "openrouter/free"
+# and filters for request capabilities such as image understanding, so the
+# answer model keeps working without pinning a specific model.
 ANSWER_MODEL = "openrouter/free"
 
 # NEW: Text embeddings stay on the local Sentence Transformer model.

@@ -23,12 +23,14 @@ Fusion (RRF) and sent to a vision-capable answer model.
 ## Tech Stack
 
 - **PDF processing**: Unstructured (`hi_res`, table and image extraction)
-- **Text embeddings**: Sentence Transformers (`all-MiniLM-L6-v2`, 384-d)
+- **Text embeddings**: Sentence Transformers via `langchain-huggingface`
+  (`all-MiniLM-L6-v2`, 384-d)
 - **Visual embeddings**: Google Gemini Embedding 2 (`gemini-embedding-2`, 768-d)
 - **Keyword search**: BM25 (`rank-bm25`, BM25L)
 - **Vector database**: ChromaDB, two cosine collections
 - **Fusion**: Reciprocal Rank Fusion (RRF)
 - **Answer model**: Vision-capable model through OpenRouter
+  (`openrouter/free`)
 - **Frontend**: Streamlit
 - **Package manager**: uv
 
@@ -106,7 +108,6 @@ uv run python pipeline.py --pdf "./content/attention.pdf" --query "What is the t
 ├── bm25_store.py           # BM25 index
 ├── vector_store.py         # Two Chroma collections + BM25
 ├── retriever.py            # Hybrid retrieval, RRF, and answer generation
-├── summarizer.py           # Legacy summarizer, no longer used
 ├── tests/                  # Offline unit tests
 ├── content/                # Uploaded PDFs (ignored by Git)
 ├── dbv3/                   # Chroma persistence (ignored by Git)

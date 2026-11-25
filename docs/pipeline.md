@@ -1,11 +1,23 @@
 # pipeline.py
 
-This module is the top-level orchestrator. Its job is to compose the lower-level modules into complete workflows so that calling code — whether it's the Streamlit app or a CLI script — doesn't need to know the internal sequence of steps.
+This module is the CLI orchestrator. It composes the ingestion and retrieval
+modules into a single command-line workflow.
 
-`ingest_pdf` runs the three-stage ingestion sequence: partition the PDF into structured elements, chunk those elements by title, then generate AI-enhanced summaries. It returns a list of LangChain `Document` objects. Separating this from `run_ingestion` was a deliberate choice — the Streamlit app needs to collect documents from multiple files before building a single shared vector store. If we fused document processing and vector store creation into one function, multi-file ingestion would create one store per file and throw everything except the last one away.
+`ingest_pdf` calls `build_ingestion_records(pdf_path)` (from `ingestion.py`).
+That function partitions the PDF with `unstructured` `hi_res`, chunks the
+elements by title, and returns an `IngestionBatch` of text records (MiniLM)
+and visual records (images and tables, Gemini). No vision-LLM summarization
+happens.
 
-`run_ingestion` is the convenience function for single-file workflows or the CLI case. It calls `ingest_pdf` then immediately creates a vector store from the result.
+`run_ingestion` creates the hybrid store with `create_vector_store()`,
+deletes existing records for the same source file with `delete_source()`, and
+adds the new batch with `add_batch()`. Deleting first means a re-ingested,
+changed PDF does not leave stale text/image/table records behind.
 
-`run_query` takes an already-built vector store and a question, then returns both the answer string and the retrieved documents. Returning the documents alongside the answer lets the caller display sources or do further processing without needing to re-run retrieval.
+`run_query` calls `retrieve_documents(store, query)` (hybrid RRF retrieval)
+and `generate_final_answer(chunks, query)`, returning both the answer string
+and the retrieved documents so callers can display sources.
 
-The `__main__` block exposes a CLI interface using `argparse`. This is useful for batch processing, testing, or running the pipeline from a CI job without the full Streamlit UI. You pass `--pdf` for the file path and `--query` for an optional question to ask immediately after ingestion.
+The `__main__` block exposes a CLI: `--pdf` is required; `--query` is
+optional. Without a query, the script only ingests. Useful for batch
+processing, testing, or CI without the Streamlit UI.
